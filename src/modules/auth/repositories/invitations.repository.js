@@ -50,6 +50,19 @@ const removeMemberFromTeam = async (adminId, memberId) => {
     { new: true }
   );
 };
+
+
+// لو عايز تعدل بالواحدة
+const updateSinglePermission = async (adminId, memberId, key, value) => {
+  const updateQuery = {};
+  updateQuery[`teams.$.permissions.${key}`] = value; // ديناميك كي
+
+  return await Developer.findOneAndUpdate(
+    { _id: memberId, "teams.adminId": adminId },
+    { $set: updateQuery },
+    { new: true }
+  );
+};
 module.exports = {
   createInvitation,
   findPendingInvite,
@@ -57,5 +70,7 @@ module.exports = {
   findInviteById,
   updateInvitationStatus,
   findTeamMembers,
-  removeMemberFromTeam
+  removeMemberFromTeam,
+  updateSinglePermission
+  
 }

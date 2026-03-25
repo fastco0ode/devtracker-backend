@@ -166,4 +166,43 @@ const removeMember = async (adminId , memberId) => {
 
   return { message: "Member removed successfully from your team" };
 }
-module.exports = {sendInvite , getMyInvitations , respondToInvite , getTeamMembers , removeMember}
+
+// بدل newPermissions، هنستقبل key (اسم الصلاحية) و value (true/false)
+const changeMemberPermissions = async (adminId, memberId, key, value) => {
+  
+  // 1. Validation: نتأكد إن الـ key والـ value مبعوتين
+  // خلي بالك الـ value ممكن تبقى false، فبنختبر إنها مش undefined
+  if (!memberId || !key || value === undefined) {
+    throw new ApiError(400, "Member ID, permission key, and value are required");
+  }
+
+  const allowedKeys = ["canCreateProjects", "canEditProjects", "canDeleteProjects", "canManageTasks", "canSeeFinancials"];
+
+if (!allowedKeys.includes(key)) {
+  throw new ApiError(400, "Invalid permission key");
+}
+
+  // 2. تحديث الصلاحية الواحدة في الـ Repository
+  // لاحظ إننا بنبعت الـ 4 parameters بالترتيب الصح
+  const updatedMember = await InvitationRepo.updateSinglePermission(adminId, memberId, key, value);
+
+  if (!updatedMember) {
+    throw new ApiError(404, "Member not found in your team or you are not the admin");
+  }
+
+  // 3. التنبيه بالـ Socket
+  if (global.io) {
+    global.io.to(memberId.toString()).emit("permissions_updated", {
+      adminId: adminId,
+      updatedKey: key, 
+      newValue: value,
+      message: `Your permission '${key}' has been updated to ${value}.`
+    });
+  }
+
+  return { 
+    message: "Permission updated successfully", 
+    updated: { [key]: value } // بنرجع الصلاحية اللي اتعدلت بس
+  };
+};
+module.exports = {sendInvite , getMyInvitations , respondToInvite , getTeamMembers , removeMember , changeMemberPermissions}

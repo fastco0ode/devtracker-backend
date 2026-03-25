@@ -99,10 +99,46 @@ const removeTeamMember = async (req, res, next) => {
     next(error);
   }
 };
+
+
+/**
+ * @desc    Update a single permission for a team member
+ * @route   PATCH /api/v1/teams/members/:memberId/permissions
+ * @access  Private (Admin Only)
+ */
+const updateMemberPermission = async (req, res, next) => {
+  try {
+    const adminId = req.user._id;
+    const { memberId } = req.params;
+    const { key, value } = req.body; // بنبعت مثلاً key: "canDeleteProjects", value: true
+
+    const result = await teamService.changeMemberPermissions(
+      adminId,
+      memberId,
+      key,
+      value
+    );
+
+    res.status(200).json({
+      status: "success",
+      message: result.message,
+      data: {
+        updatedPermission: result.updated
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// متنساش تضيفها في الـ module.exports تحت
+// module.exports = { ..., updateMemberPermission };
+
 module.exports = {
   sendInvite,
   getMyInvitations,
   respondToInvitation,
   getTeamMembers,
-  removeTeamMember
+  removeTeamMember,
+  updateMemberPermission
 };
