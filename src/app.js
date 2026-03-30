@@ -12,6 +12,7 @@ const taskRouter = require("./modules/auth/routes/task.routes");
 const TaskActivity = require("./modules/auth/routes/taskActivity.routes");
 const { developerRouter } = require("./modules/auth/routes/developer.routes");
 const { invitaionsRouter } = require("./modules/auth/routes/invitations.routes");
+const subscriptionRouter = require("./modules/subscriptions/routes/subscription.routes");
 require('./utils/taskQueue');
 
 const app = express();
@@ -25,6 +26,16 @@ const io = new Server(server, {
     methods: ["GET", "POST"]
   }
 });
+// لازم ده يكون قبل أي حاجة عشان يفك شفرة الـ JSON في الريكويست العادي بس نستثني الاسترايب ميعملش فيه كده
+app.use((req, res, next) => {
+  if (req.originalUrl.includes('webhook')) {
+    next();
+  } else {
+    express.json()(req, res, next);
+  }
+});
+
+app.use('/subscribe/webhook', express.raw({ type: 'application/json' }));
 
 // 2. جعل الـ io متاح عالمياً
 global.io = io;
@@ -41,10 +52,10 @@ io.use((socket, next) => {
   try {
     // فك التوكن والتأكد إنه سليم (JWT_SECRET لازم يكون نفس اللي في الـ login)
     const decoded = jwt.verify(token, process.env.JWT_SECRET || "your_jwt_secret_here");
-    
+
     // بنخزن بيانات اليوزر جوه الـ socket عشان نستخدمها بعدين
     // افترضنا إن التوكن جواه _id أو id
-    socket.userId = decoded.id || decoded._id; 
+    socket.userId = decoded.id || decoded._id;
     next();
   } catch (err) {
     return next(new Error("Authentication error: Invalid token"));
@@ -86,7 +97,13 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "10kb" }));
+app.use((req, res, next) => {
+  if (req.originalUrl.includes('/webhooks/stripe')) {
+    next();
+  } else {
+    express.json({ limit: "10kb" })(req, res, next);
+  }
+});
 
 app.get("/", (req, res) => {
   res.json({ message: "Hello from secure socket server" });
@@ -98,6 +115,7 @@ app.use('/project', taskRouter);
 app.use('/activityproject', TaskActivity);
 app.use('/developerSettings', developerRouter);
 app.use('/invitations', invitaionsRouter);
+app.use('/subscribe', subscriptionRouter);
 
 app.use(errorMiddleware);
 

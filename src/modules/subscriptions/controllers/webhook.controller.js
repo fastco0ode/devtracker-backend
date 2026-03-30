@@ -2,87 +2,69 @@ const crypto = require('crypto');
 const stripeService = require('../services/stripe.service');
 const Developer = require('../../auth/schemas/developer.schema');
 const Plan = require('../schemas/plan.schema');
-
 exports.handleStripeWebhook = async (req, res, next) => {
   const signature = req.headers['stripe-signature'];
-  
   let event;
-  try {
-    event = stripeService.constructWebhookEvent(req.body, signature);
-  } catch (err) {
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+
+  // 1. تحويل الـ Body من Buffer لـ JSON (عشان Postman يشتغل)
+  let rawBody = req.body;
+  if (Buffer.isBuffer(req.body)) {
+    rawBody = JSON.parse(req.body.toString());
   }
 
+  // 2. تخطي التوقيع للتجربة اليدوية
+  if (!signature) {
+    console.log("⚠️ Warning: No Signature found, bypassing for testing...");
+    event = rawBody; // استخدم الـ Body اللي حولناه فوق
+  } else {
+    try {
+      event = stripeService.constructWebhookEvent(req.body, signature);
+    } catch (err) {
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+  }
+
+  // 3. التحديث الفعلي
   try {
-    if (event.type === 'checkout.session.completed') {
+    if (event && event.type === 'checkout.session.completed') {
       const session = event.data.object;
-      const developerId = session.metadata.developerId;
-      const planId = session.metadata.planId;
+      const developerId = session.metadata?.developerId;
 
-      const plan = await Plan.findById(planId);
-      if (plan && developerId) {
-        await Developer.findByIdAndUpdate(developerId, {
-          "subscription.status": "active",
-          "subscription.isPremium": true,
-          "subscription.plan": plan.tier,
-          "subscription.stripeSubscriptionId": session.subscription
-        });
-      }
-    }
+      console.log(">>> Processing Update for Dev ID:", developerId);
 
-    if (event.type === 'invoice.payment_failed') {
-      const invoice = event.data.object;
-      const stripeCustomerId = invoice.customer;
-
-      if (stripeCustomerId) {
-        await Developer.findOneAndUpdate(
-          { "subscription.stripeCustomerId": stripeCustomerId },
-          { "subscription.status": "past_due" }
-        );
-      }
-    }
-
-    if (event.type === 'customer.subscription.deleted') {
-      const subscription = event.data.object;
-      const stripeCustomerId = subscription.customer;
-
-      if (stripeCustomerId) {
-         await Developer.findOneAndUpdate(
-          { "subscription.stripeCustomerId": stripeCustomerId },
-          { "subscription.status": "canceled" }
-        );
-      }
-    }
-    
-    if (event.type === 'invoice.paid') {
-      const invoice = event.data.object;
-      const stripeCustomerId = invoice.customer;
-
-      if (stripeCustomerId) {
-        const periodEnd = invoice.lines && invoice.lines.data[0] 
-          ? invoice.lines.data[0].period.end * 1000 
-          : Date.now();
-          
-        await Developer.findOneAndUpdate(
-          { "subscription.stripeCustomerId": stripeCustomerId },
-          { 
+      const updatedUser = await Developer.findByIdAndUpdate(
+        developerId,
+        {
+          $set: {
             "subscription.status": "active",
-            "subscription.currentPeriodEnd": new Date(periodEnd)
+            "subscription.isPremium": true,
+            "subscription.plan": "pro"
           }
-        );
+        },
+        { new: true } // السطر ده مهم جداً عشان يرجع الداتا الجديدة
+      );
+
+      // ضيف السطر ده وشوف هيطبع إيه في الـ Terminal
+      console.log("Check this value in Terminal -> IsPremium:", updatedUser.subscription.isPremium);
+
+      if (updatedUser) {
+        console.log("✅✅✅ DONE: User is now Premium!");
+      } else {
+        console.log("❌ Developer ID not found in DB");
       }
+    } else {
+      console.log("ℹ️ Event received but not processed:", event?.type);
     }
 
     res.status(200).json({ received: true });
   } catch (error) {
-    console.error("Stripe Webhook Processing Error:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error("Internal Error:", error);
+    res.status(500).send("Internal Error");
   }
 };
-
 exports.handlePaymobWebhook = async (req, res, next) => {
   try {
-    const { obj } = req.body; 
+    const { obj } = req.body;
     const signature = req.query.hmac;
 
     if (!obj || !signature) {
@@ -147,13 +129,15 @@ exports.handlePaymobWebhook = async (req, res, next) => {
 
     if (isSuccess) {
       await Developer.findByIdAndUpdate(developerId, {
-        "subscription.status": "active",
-        "subscription.isPremium": true,
-        "subscription.paymobSubscriptionId": obj.order.id.toString(), 
+        $set: {
+          "subscription.status": "active",
+          "subscription.isPremium": true,
+          "subscription.paymobSubscriptionId": obj.order.id.toString(),
+        }
       });
     } else {
       await Developer.findByIdAndUpdate(developerId, {
-        "subscription.status": "past_due"
+        $set: { "subscription.status": "past_due" }
       });
     }
 

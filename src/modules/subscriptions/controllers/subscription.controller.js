@@ -7,6 +7,9 @@ exports.checkout = async (req, res, next) => {
   try {
     const { planId, currency } = req.body;
     const developer = req.user;
+    console.log("Searching for Plan ID:", planId);
+    const plan1 = await Plan.findById(planId);
+    console.log("Plan found in DB:", plan1);
 
     const plan = await Plan.findById(planId);
     if (!plan) {
@@ -14,18 +17,17 @@ exports.checkout = async (req, res, next) => {
     }
 
     developer.subscription = developer.subscription || {};
-    developer.subscription.plan = plan.tier;
+    // Only save temp info, don't grant the plan tier or interval until payment is successful
     developer.subscription.currency = currency;
-    developer.subscription.interval = plan.interval;
-    developer.subscription.planIdTemp = planId; 
-    
+    developer.subscription.planIdTemp = planId;
+
     await developer.save();
 
     if (currency === "EGP") {
       const token = await paymobService.getAuthToken();
       const amountCents = plan.price * 100;
       const merchantOrderId = `${developer._id}_${Date.now()}`;
-      
+
       const orderId = await paymobService.registerOrder({
         token,
         amountCents,
@@ -43,7 +45,7 @@ exports.checkout = async (req, res, next) => {
 
       const iframeUrl = paymobService.buildIframeUrl(paymentKey);
       return res.status(200).json({ iframeUrl });
-      
+
     } else if (currency === "USD") {
       const successUrl = `${process.env.FRONTEND_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`;
       const cancelUrl = `${process.env.FRONTEND_URL}/payment-cancel`;
@@ -80,7 +82,7 @@ exports.getSubscriptionStatus = async (req, res, next) => {
 exports.cancelSubscription = async (req, res, next) => {
   try {
     const developer = req.user;
-    
+
     if (!developer.subscription) {
       return next(new ApiError(400, 'No active subscription found'));
     }

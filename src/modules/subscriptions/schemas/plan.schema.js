@@ -51,4 +51,5 @@ const planSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Plan", planSchema);
+
+module.exports = mongoose.model("Plan", planSchema, "Plan");

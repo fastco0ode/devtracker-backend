@@ -41,6 +41,7 @@ const developerSchema = new mongoose.Schema(
       currentPeriodEnd: { type: Date },
       trialEndsAt: { type: Date },
       paymobSubscriptionId: { type: String },
+      stripeSubscriptionId: { type: String },
       interval: {
         type: String,
         enum: ["monthly", "yearly"],
