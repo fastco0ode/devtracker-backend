@@ -13,6 +13,7 @@ const {
   deleteProjects,
   countAllProjects,
   countAllArchivedProjects,
+  incrementDeveloperProjectCount,
 } = require("../repositories/project.repository");
 
 const createDevProject = async ({

@@ -61,16 +61,16 @@ const findAllProjects = async (ownerIds, page, limit) => {
 
 const deleteOneProject = async (ownerId, projectId) => {
   if (!mongoose.Types.ObjectId.isValid(projectId)) {
-  throw new ApiError(400, "Invalid Project ID");
-}
+    throw new ApiError(400, "Invalid Project ID");
+  }
 
   const project = await Project.findOneAndDelete({
     _id: projectId,
     owner: ownerId,
   },
 
-  
-);
+
+  );
 
   return project;
 };
@@ -78,37 +78,37 @@ const deleteOneProject = async (ownerId, projectId) => {
 // src/modules/projects/repositories/auth.repository.js
 
 const incrementDeveloperProjectCount = async (developerId) => {
-  return await  Developer.findByIdAndUpdate(
+  return await Developer.findByIdAndUpdate(
     developerId,
-    { $inc: { projectCount: 1 } }, 
+    { $inc: { projectCount: 1 } },
     { new: true }
   );
 };
 const countAllProjects = async (developerId) => {
   return await Project.countDocuments({
     owner: developerId,
-    isArchived:false
+    isArchived: false
   })
 }
 
 const countAllArchivedProjects = async (developerId) => {
   return await Project.countDocuments({
     owner: developerId,
-    isArchived:true
+    isArchived: true
   })
 }
 
 const getOneProject = async (projectId) => {
-    if (!mongoose.Types.ObjectId.isValid(projectId)) {
-  throw new ApiError(400, "Invalid Project ID");
-}
+  if (!mongoose.Types.ObjectId.isValid(projectId)) {
+    throw new ApiError(400, "Invalid Project ID");
+  }
 
   const project = await Project.findById(projectId)
   return project;
 }
 
 const getOneActiveProjects = async (developerId, projectId) => {
-    const project = await Project.findOne({
+  const project = await Project.findOne({
     _id: projectId,
     owner: developerId,
     isArchived: false,
@@ -117,8 +117,8 @@ const getOneActiveProjects = async (developerId, projectId) => {
   return project
 }
 
-const deleteProjects = async(ownerId) => {
-  const deletedProjects = await Project.deleteMany({owner:ownerId , isArchived: true,})
+const deleteProjects = async (ownerId) => {
+  const deletedProjects = await Project.deleteMany({ owner: ownerId, isArchived: true, })
   return deletedProjects;
 }
 
@@ -129,11 +129,11 @@ module.exports = {
   getArchivedProjects,
   findAllProjects,
   deleteOneProject,
-  getOneProject, 
+  getOneProject,
   deleteProjects,
   countAllProjects,
-  countAllArchivedProjects, 
+  countAllArchivedProjects,
   getOneActiveProjects,
   incrementDeveloperProjectCount
-  
+
 };
