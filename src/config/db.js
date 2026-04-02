@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 dotenv.config({ path: "./config.env" });
 
 const dbConnection = () => {
+  console.log("Current Mongo URL from Env:", process.env.MONGO_URL);
   console.log("Connecting to MongoDB...");
 
   mongoose

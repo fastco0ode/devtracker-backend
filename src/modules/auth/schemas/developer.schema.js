@@ -91,4 +91,5 @@ const developerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Developer", developerSchema);
+
+module.exports = mongoose.model("Developer", developerSchema, "developers");
