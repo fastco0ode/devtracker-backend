@@ -14,10 +14,10 @@ exports.checkout = async (req, res, next) => {
     console.log("Plan found in DB:", plan1);
     console.log("Developer ID being sent to Stripe:", req.user._id.toString());
     console.log("Developer object:", req.user);
-    const objectId = new mongoose.Types.ObjectId("69cad6c0cd505487028ea850");
+
 
     const result = await findUserById(
-      objectId,
+      req.user._id,
       { $set: { "subscription.status": "active", "subscription.isPremium": true } },
       { new: true }
     );
