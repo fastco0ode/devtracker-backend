@@ -42,7 +42,11 @@ const planSchema = new mongoose.Schema(
       default: true,
     },
     stripeProductId: {
-      type: String,
+      type: String, // ده الـ prod_...
+    },
+    // ✅ الحقل ده اللي ناقص وموقف حالك
+    stripePriceId: {
+      type: String, // ده الـ price_...
     },
     paymobPlanId: {
       type: String,
@@ -50,6 +54,5 @@ const planSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
 
 module.exports = mongoose.model("Plan", planSchema, "Plan");
