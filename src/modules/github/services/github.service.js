@@ -15,7 +15,6 @@ const ApiError = require("../../../utils/apiErrors");
 const { encryptToken, decryptToken } = require("../../../utils/crypto.helper");
 const { startProTrial, getTrialStatus } = require("../../../utils/trial.helper");
 const {
-  findByGithubId,
   findByEmail,
   updateGithubData,
   setLinkedRepos,
@@ -40,7 +39,7 @@ const exchangeCodeForToken = async (code) => {
   const response = await axios.post(
     "https://github.com/login/oauth/access_token",
     {
-      client_id:     process.env.GITHUB_CLIENT_ID,
+      client_id: process.env.GITHUB_CLIENT_ID,
       client_secret: process.env.GITHUB_CLIENT_SECRET,
       code,
     },
@@ -63,7 +62,7 @@ const fetchGithubProfile = async (accessToken) => {
   const { data } = await axios.get("https://api.github.com/user", {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      "User-Agent":  "DevTracker-API",
+      "User-Agent": "DevTracker-API",
     },
   });
   return data;
@@ -87,21 +86,7 @@ const linkGithubAccount = async (developerId, code) => {
   const ghProfile = await fetchGithubProfile(rawToken);
   const { id: githubId, login: githubLogin } = ghProfile;
 
-  // Step 3 — Check if this GitHub account is already linked to ANOTHER user
-  const existing = await findByGithubId(githubId);
-  if (existing && existing._id.toString() !== developerId) {
-    // The user owns the GitHub account (proven via OAuth token),
-    // so we can safely unlink it from their old DevTracker account
-    // and link it to their current one.
-    await Developer.findByIdAndUpdate(existing._id, {
-      $unset: {
-        "github.githubId": 1,
-        "github.githubToken": 1,
-        "github.githubLogin": 1,
-        "github.linkedRepos": 1
-      }
-    });
-  }
+  // Step 3 was removed: Allow multiple DevTracker accounts to link to the same GitHub account
 
   // Step 4 — Load the current developer document
   const developer = await Developer.findById(developerId);
@@ -116,12 +101,12 @@ const linkGithubAccount = async (developerId, code) => {
   // Step 7 — Persist all GitHub data atomically
   developer.github = {
     ...developer.github.toObject(),
-    githubId:          String(githubId),
-    githubToken:       encryptedToken,
+    githubId: String(githubId),
+    githubToken: encryptedToken,
     githubLogin,
-    isPro:             developer.github.isPro || false,
+    isPro: developer.github.isPro || false,
     proTrialStartDate: developer.github.proTrialStartDate,
-    proTrialEndDate:   developer.github.proTrialEndDate,
+    proTrialEndDate: developer.github.proTrialEndDate,
   };
 
   await developer.save();
@@ -169,7 +154,7 @@ const listGithubRepos = async (developerId) => {
     const { data } = await axios.get("https://api.github.com/user/repos", {
       headers: {
         Authorization: `Bearer ${rawToken}`,
-        "User-Agent":  "DevTracker-API",
+        "User-Agent": "DevTracker-API",
       },
       params: { per_page: perPage, page, sort: "updated", affiliation: "owner" },
     });
@@ -182,15 +167,15 @@ const listGithubRepos = async (developerId) => {
 
   // ── Shape response — only expose what the frontend needs ──────────────────
   const shaped = repos.map((r) => ({
-    repoId:      r.id,
-    name:        r.name,
-    fullName:    r.full_name,
-    private:     r.private,
-    htmlUrl:     r.html_url,
+    repoId: r.id,
+    name: r.name,
+    fullName: r.full_name,
+    private: r.private,
+    htmlUrl: r.html_url,
     description: r.description,
-    language:    r.language,
-    stars:       r.stargazers_count,
-    updatedAt:   r.updated_at,
+    language: r.language,
+    stars: r.stargazers_count,
+    updatedAt: r.updated_at,
   }));
 
   // ── Populate cache ─────────────────────────────────────────────────────────
@@ -223,11 +208,11 @@ const selectRepos = async (developerId, repos) => {
       );
     }
     return {
-      repoId:   Number(r.repoId),
-      name:     String(r.name),
+      repoId: Number(r.repoId),
+      name: String(r.name),
       fullName: String(r.fullName),
-      private:  Boolean(r.private),
-      htmlUrl:  r.htmlUrl || "",
+      private: Boolean(r.private),
+      htmlUrl: r.htmlUrl || "",
       language: r.language || null,
     };
   });
@@ -255,9 +240,9 @@ const fetchTrialStatus = async (developerId) => {
   const { active, daysRemaining, endsAt } = getTrialStatus(proTrialEndDate);
 
   return {
-    isPro:        isPro || false,
+    isPro: isPro || false,
     githubLinked: !!githubId,
-    githubLogin:  githubLogin || null,
+    githubLogin: githubLogin || null,
     active,
     daysRemaining,
     endsAt,
