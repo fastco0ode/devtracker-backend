@@ -1,26 +1,107 @@
 const ApiError = require("../../../utils/apiErrors");
-const TaskActivity = require('../schemas/taskActivity.schema') 
-const TaskActivityRepo = require('../repositories/taskActivty.repository')
+const TaskActivity = require('../schemas/taskActivity.schema');
+const TaskActivityRepo = require('../repositories/taskActivty.repository');
 const mongoose = require("mongoose");
 const { findTaskById } = require("../repositories/task.repository");
+const redis = require('../../../config/redis');
+const { autoCompleteQueue, taskSyncQueue } = require('../../../utils/taskQueue');
 
 async function startTask({ developerId, projectId, taskId, source = "MANUAL" }) {
   if (!developerId || !projectId || !taskId)
     throw new ApiError(401, "Unauthorized: missing developer, project or task id");
 
-  const task = await findTaskById(taskId);
-if (task.status === "done") {
-  throw new ApiError(400, "خلاص يا ريس التاسك دي خلصت، مينفعش تبدأ فيها تاني!");
-}
+  const redisKey = `task:${taskId}`;
+  const existingState = await redis.hgetall(redisKey);
 
-  return TaskActivityRepo.createStart({ developerId, projectId, taskId, source });
+  if (existingState && existingState.status === "completed") {
+    throw new ApiError(400, "خلاص يا ريس التاسك دي خلصت، مينفعش تبدأ فيها تاني!");
+  }
+
+  if (existingState && existingState.status === "active") {
+    throw new ApiError(400, "التاسك شغال بالفعل.");
+  }
+
+  const task = await findTaskById(taskId);
+  if (!task) {
+    throw new ApiError(404, "Task not found");
+  }
+
+  if (task.status === "done") {
+    await redis.hset(redisKey, { status: 'completed' });
+    throw new ApiError(400, "خلاص يا ريس التاسك دي خلصت، مينفعش تبدأ فيها تاني!");
+  }
+
+  const estimatedDuration = (task.estimatedHours || 0) * 3600000;
+  let accumulatedDuration = parseInt(existingState.accumulatedDuration || "0", 10);
+
+  if (!existingState || Object.keys(existingState).length === 0) {
+    accumulatedDuration = (task.spentHours || 0) * 3600000;
+  }
+
+  const remainingTime = Math.max(0, estimatedDuration - accumulatedDuration);
+
+  // Auto-complete timer
+  let bullJobId = null;
+  if (estimatedDuration > 0 && remainingTime > 0) {
+    const job = await autoCompleteQueue.add('auto-complete', {
+      developerId, projectId, taskId
+    }, {
+      delay: remainingTime,
+      jobId: `autocomplete:${taskId}`
+    });
+    bullJobId = job.id;
+  }
+
+  await redis.hset(redisKey, {
+    projectId: projectId.toString(),
+    developerId: developerId.toString(),
+    status: 'active',
+    startTime: Date.now(),
+    accumulatedDuration,
+    estimatedDuration,
+    ...(bullJobId && { bullJobId })
+  });
+
+  await taskSyncQueue.add('sync-start', {
+    developerId, projectId, taskId, type: 'START', source
+  });
+
+  return { success: true, message: "Task started", taskId };
 }
 
 async function endTask({ developerId, projectId, taskId, source = "MANUAL" }) {
   if (!developerId || !projectId || !taskId)
     throw new ApiError(401, "Unauthorized: missing developer, project or task id");
 
-  return TaskActivityRepo.createEnd({ developerId, projectId, taskId, source });
+  const redisKey = `task:${taskId}`;
+  const taskState = await redis.hgetall(redisKey);
+
+  if (!taskState || taskState.status !== 'active') {
+    throw new ApiError(400, "Task is not active or already ended.");
+  }
+
+  const startTime = parseInt(taskState.startTime || Date.now(), 10);
+  const accumulatedDuration = parseInt(taskState.accumulatedDuration || "0", 10);
+  const elapsed = Date.now() - startTime;
+  const newAccumulated = accumulatedDuration + elapsed;
+
+  if (taskState.bullJobId) {
+    const job = await autoCompleteQueue.getJob(taskState.bullJobId);
+    if (job) await job.remove();
+  }
+
+  await redis.hset(redisKey, {
+    status: 'paused',
+    accumulatedDuration: newAccumulated
+  });
+  await redis.hdel(redisKey, 'startTime');
+  await redis.hdel(redisKey, 'bullJobId');
+
+  await taskSyncQueue.add('sync-end', {
+    developerId, projectId, taskId, type: 'END', source
+  });
+
+  return { success: true, message: "Task paused/ended" };
 }
 
 async function pauseTask({ developerId, projectId, taskId }) {
@@ -32,6 +113,27 @@ async function resumeTask({ developerId, projectId, taskId }) {
 }
 
 async function getTaskStatus({ developerId, taskId }) {
+  const redisKey = `task:${taskId}`;
+  const taskState = await redis.hgetall(redisKey);
+
+  if (taskState && Object.keys(taskState).length > 0) {
+    const isWorking = taskState.status === 'active';
+    let durationMs = parseInt(taskState.accumulatedDuration || "0", 10);
+
+    if (isWorking && taskState.startTime) {
+      durationMs += (Date.now() - parseInt(taskState.startTime, 10));
+    }
+
+    const hours = Math.floor(durationMs / (1000 * 60 * 60));
+    const minutes = Math.floor((durationMs / (1000 * 60)) % 60);
+
+    return {
+      isWorking,
+      duration: `${hours}h ${minutes}m`,
+      status: taskState.status
+    };
+  }
+
   const lastStart = await TaskActivityRepo.findLastStart({ developerId, taskId });
   if (!lastStart) return { isWorking: false, duration: "0h 0m" };
 
@@ -75,7 +177,7 @@ const getWeeklyTotalHours = async (developerId) => {
   const now = new Date();
   const startOfWeek = new Date();
   startOfWeek.setHours(0, 0, 0, 0);
-  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); 
+  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
 
   const stats = await TaskActivity.aggregate([
     {
@@ -105,9 +207,9 @@ const getWeeklyTotalHours = async (developerId) => {
         if (logs[i + 1] && logs[i + 1].type === 'END') {
           endTime = new Date(logs[i + 1].time);
         } else {
-          endTime = new Date(); 
+          endTime = new Date();
         }
-        
+
         totalMs += (endTime - startTime);
       }
     }
@@ -132,9 +234,9 @@ const getWeeklyProductivityStats = async (developerId) => {
     { $sort: { task: 1, createdAt: 1 } },
     {
       $group: {
-        _id: { 
-          task: "$task", 
-          day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } } 
+        _id: {
+          task: "$task",
+          day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
         },
         activities: { $push: { type: "$type", time: "$createdAt" } }
       }
@@ -154,10 +256,10 @@ const getWeeklyProductivityStats = async (developerId) => {
                 },
                 in: {
                   $cond: [
-                    { 
+                    {
                       $and: [
                         { $eq: ["$$current.type", "START"] },
-                        { $eq: ["$$next.type", "END"] } 
+                        { $eq: ["$$next.type", "END"] }
                       ]
                     },
                     {
@@ -171,8 +273,8 @@ const getWeeklyProductivityStats = async (developerId) => {
                             in: {
                               $cond: [
                                 { $or: [{ $gt: ["$$diff", 86400000] }, { $lt: ["$$diff", 0] }] },
-                                0, 
-                                { $divide: ["$$diff", 3600000] } 
+                                0,
+                                { $divide: ["$$diff", 3600000] }
                               ]
                             }
                           }
