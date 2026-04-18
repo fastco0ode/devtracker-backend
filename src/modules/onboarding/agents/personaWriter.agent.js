@@ -284,6 +284,48 @@ const _buildFallbackMessage = (brief) => {
  */
 
 /**
+ * _extractJson
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Multi-strategy JSON extractor. Handles all known Gemini response formats:
+ *   1. Pure JSON string (happy path)
+ *   2. Markdown-fenced JSON (```json ... ```)
+ *   3. JSON embedded anywhere in a text response (bracket extraction)
+ *
+ * Throws if no valid JSON object can be extracted.
+ *
+ * @param {string} raw — raw text from model.generateContent()
+ * @returns {Object} parsed JSON object
+ */
+const _extractJson = (raw) => {
+  // Strategy 1: raw text IS already valid JSON
+  try {
+    return JSON.parse(raw.trim());
+  } catch (_) { /* not pure JSON — proceed */ }
+
+  // Strategy 2: strip markdown fences (```json ... ```) anywhere in the string
+  const fenceStripped = raw
+    .replace(/```(?:json)?\s*/gi, "")
+    .replace(/```/g, "")
+    .trim();
+  try {
+    return JSON.parse(fenceStripped);
+  } catch (_) { /* still not clean JSON — proceed */ }
+
+  // Strategy 3: bracket-match extraction — find the outermost { ... } block
+  const firstBrace = raw.indexOf("{");
+  const lastBrace  = raw.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const extracted = raw.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(extracted);
+    } catch (_) { /* extraction also failed — fall through to throw */ }
+  }
+
+  // All strategies exhausted — throw so caller can return the fallback
+  throw new Error("Could not extract valid JSON from Gemini response");
+};
+
+/**
  * Entry point for Agent 3.
  * Sends the project brief to Gemini and returns a parsed onboarding message object.
  * Falls back to a structured message if Gemini is unavailable.
@@ -298,10 +340,12 @@ const runPersonaWriter = async (brief) => {
       model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
       systemInstruction: ARIA_SYSTEM_PROMPT,
       generationConfig: {
-        temperature: 0.75,       // balanced creativity — precise but not robotic
+        temperature: 0.75, // balanced creativity — precise but not robotic
         topP: 0.9,
-        maxOutputTokens: 4096,   // keeps response tight and parseable
-        responseMimeType: "application/json", // force JSON output mode
+        maxOutputTokens: 4096,
+        // NOTE: responseMimeType is intentionally omitted — it causes gemini-2.5-flash
+        // to return responses in an incompatible format that breaks text() extraction.
+        // The system prompt's Rule 8 enforces raw JSON output instead.
       },
     });
 
@@ -310,25 +354,32 @@ const runPersonaWriter = async (brief) => {
     const result = await model.generateContent(userPrompt);
     const rawText = result.response.text();
 
-    // ── Parse and validate the JSON response ──────────────────────────────
+    // ── JSON Extractor: multi-strategy, bullet-proof ───────────────────────
     let parsed;
     try {
-      // Strip potential markdown fences if model still wraps in ```json
-      const cleanJson = rawText.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
-      parsed = JSON.parse(cleanJson);
+      parsed = _extractJson(rawText);
     } catch (parseErr) {
-      console.error("[PersonaWriter] ⚠️  Gemini returned unparseable JSON. Raw response:", rawText);
+      console.error(
+        `[PersonaWriter] ⚠️  Gemini returned unparseable JSON after all cleaning strategies. parseErr: ${parseErr.message}`
+      );
+      console.error("[PersonaWriter] Raw response was:", rawText.slice(0, 500));
       return _buildFallbackMessage(brief);
     }
 
-    // Validate required fields
+    // ── Field Validation (type-aware) ─────────────────────────────────────
     const requiredFields = ["subject", "greeting", "projectSnapshot", "priorityFiles", "bottleneckAlerts", "firstMission", "closingSignal"];
-    const missingFields = requiredFields.filter((f) => !parsed[f]);
+    const missingFields = requiredFields.filter((f) => {
+      const v = parsed[f];
+      if (v === null || v === undefined) return true;     // missing
+      if (typeof v === "string" && v.trim() === "") return true; // empty string
+      if (Array.isArray(v) && v.length === 0) return false;      // empty array is OK
+      return false;
+    });
 
     if (missingFields.length > 0) {
       console.warn(`[PersonaWriter] ⚠️  Gemini response missing fields: ${missingFields.join(", ")}. Merging with fallback.`);
       const fallback = _buildFallbackMessage(brief);
-      return { ...fallback, ...parsed }; // fill gaps with fallback values
+      return { ...fallback, ...parsed };
     }
 
     console.log(`[PersonaWriter] ✅ ARIA message generated for ${brief.developer.name} on project "${brief.project.name}"`);
